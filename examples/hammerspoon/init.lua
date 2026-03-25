@@ -12,9 +12,11 @@ local config = {
 math.randomseed(os.time())
 
 local pendingRequests = {}
+local requestTimers = {}
 local server = hs.httpserver.new(false, false)
 local ghosttyHotkey = nil
 local appWatcher = nil
+local activeRequestId = nil
 
 local function alert(message)
     hs.alert.show(message, 2)
@@ -26,7 +28,8 @@ end
 
 local function buildCallbackUrl(requestId)
     return string.format(
-        "http://127.0.0.1:%d%s",
+        "http://%s:%d%s",
+        config.serverInterface,
         config.serverPort,
         config.callbackPath
     )
@@ -67,6 +70,15 @@ end
 
 local function clearPendingRequest(requestId)
     pendingRequests[requestId] = nil
+
+    if requestTimers[requestId] then
+        requestTimers[requestId]:stop()
+        requestTimers[requestId] = nil
+    end
+
+    if activeRequestId == requestId then
+        activeRequestId = nil
+    end
 end
 
 server:setInterface(config.serverInterface)
@@ -118,10 +130,16 @@ local function startGhosttyUpload()
         return
     end
 
+    if activeRequestId then
+        alert("Claudeboard: upload already in progress")
+        return
+    end
+
     local requestId = string.format("%d-%d", math.floor(hs.timer.secondsSinceEpoch()), math.random(100000, 999999))
     pendingRequests[requestId] = true
+    activeRequestId = requestId
 
-    hs.timer.doAfter(config.requestTimeoutSeconds, function()
+    requestTimers[requestId] = hs.timer.doAfter(config.requestTimeoutSeconds, function()
         if pendingRequests[requestId] then
             clearPendingRequest(requestId)
             alert("Claudeboard: upload timed out")
@@ -129,7 +147,12 @@ local function startGhosttyUpload()
     end)
 
     local uri = buildVscodeUri(requestId)
-    local task = hs.task.new("/usr/bin/open", nil, { "-g", uri })
+    local task = hs.task.new("/usr/bin/open", function(exitCode, stdOut, stdErr)
+        if exitCode ~= 0 and pendingRequests[requestId] then
+            clearPendingRequest(requestId)
+            alert("Claudeboard: failed to open VS Code")
+        end
+    end, { "-g", uri })
     if not task or not task:start() then
         clearPendingRequest(requestId)
         alert("Claudeboard: failed to open VS Code")
@@ -138,21 +161,20 @@ end
 
 local function disableGhosttyHotkey()
     if ghosttyHotkey then
-        ghosttyHotkey:delete()
-        ghosttyHotkey = nil
+        ghosttyHotkey:disable()
     end
 end
 
 local function enableGhosttyHotkey()
-    if ghosttyHotkey then
-        return
+    if not ghosttyHotkey then
+        ghosttyHotkey = hs.hotkey.new(
+            config.hotkey.mods,
+            config.hotkey.key,
+            startGhosttyUpload
+        )
     end
 
-    ghosttyHotkey = hs.hotkey.bind(
-        config.hotkey.mods,
-        config.hotkey.key,
-        startGhosttyUpload
-    )
+    ghosttyHotkey:enable()
 end
 
 local function syncGhosttyHotkey()
