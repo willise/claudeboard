@@ -33,12 +33,20 @@ If you work in Ghostty on macOS, you can keep the same clipboard-image workflow 
 
 1. Install [Hammerspoon](https://www.hammerspoon.org/) and grant it Accessibility permission in System Settings.
 2. Copy [`examples/hammerspoon/init.lua`](examples/hammerspoon/init.lua) to `~/.hammerspoon/init.lua`.
-3. Keep VS Code connected to the same Remote-SSH workspace you are using in Ghostty.
+3. Keep VS Code or Trae connected to the same Remote-SSH workspace you are using in Ghostty.
 4. Focus Ghostty and press `Ctrl+Alt+V`.
 
-The example script requires no local Node.js runtime. It starts a localhost callback server inside Hammerspoon, opens the Claudeboard URI in the background, waits for the upload response, and types the remote image path into Ghostty only while Ghostty remains frontmost.
+The example script requires no local Node.js runtime. It reads active Claudeboard bridge registrations from `~/.claudeboard/ghostty-bridges`, connects to the selected localhost bridge directly, and does not switch focus to the IDE window.
 
-The example is intentionally small and self-contained. If your Ghostty app name or callback port differs, adjust the config block at the top of the Hammerspoon file.
+The Hammerspoon example consumes `Ctrl+Alt+V` through `hs.hotkey.bind`, so Ghostty and terminal apps should not receive that shortcut themselves.
+
+Selection rules:
+
+- If both `trae-cn` and `vscode` are running, `trae-cn` is preferred.
+- If there are multiple windows from the same IDE, the most recently focused bridge wins.
+- Each IDE window gets its own dynamic localhost port, so same-IDE windows do not fight over a single shared port.
+
+The example is intentionally small and self-contained. If your Ghostty app name differs, adjust the config block at the top of the Hammerspoon file.
 
 ## 🌐 Upload Destination
 

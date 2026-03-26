@@ -1,48 +1,21 @@
 local config = {
     hotkey = { mods = { "ctrl", "alt" }, key = "v" },
     ghosttyAppName = "Ghostty",
-    vscodeUri = "vscode://dkodr.claudeboard/ghostty-upload",
-    serverInterface = "localhost",
-    serverPort = 17777,
-    callbackPath = "/claudeboard/callback",
+    registryDir = os.getenv("HOME") .. "/.claudeboard/ghostty-bridges",
+    bridgeUploadPath = "/ghostty-upload",
     requestTimeoutSeconds = 30,
     typeDelaySeconds = 0.05,
 }
 
 math.randomseed(os.time())
 
-local pendingRequests = {}
-local requestTimers = {}
-local server = hs.httpserver.new(false, false)
-local ghosttyHotkey = nil
-local appWatcher = nil
+local uploadHotkey = nil
 local activeRequestId = nil
+local activeRequestTimer = nil
+local activeGhosttyApp = nil
 
 local function alert(message)
     hs.alert.show(message, 2)
-end
-
-local function encode(value)
-    return hs.http.encodeForQuery(value)
-end
-
-local function buildCallbackUrl(requestId)
-    return string.format(
-        "http://%s:%d%s",
-        config.serverInterface,
-        config.serverPort,
-        config.callbackPath
-    )
-end
-
-local function buildVscodeUri(requestId)
-    local callbackUrl = buildCallbackUrl(requestId)
-    return string.format(
-        "%s?requestId=%s&callback=%s",
-        config.vscodeUri,
-        encode(requestId),
-        encode(callbackUrl)
-    )
 end
 
 local function isGhosttyFrontmost()
@@ -50,14 +23,28 @@ local function isGhosttyFrontmost()
     return frontmost and frontmost:name() == config.ghosttyAppName
 end
 
+local function buildBridgeUrl(port, path)
+    return string.format("http://127.0.0.1:%d%s", port, path)
+end
+
 local function typeIntoGhostty(remotePath)
-    local ghostty = hs.application.get(config.ghosttyAppName)
+    local ghostty = activeGhosttyApp
     if not ghostty then
-        alert("Claudeboard: Ghostty is not running")
+        local frontmost = hs.application.frontmostApplication()
+        if frontmost and frontmost:name() == config.ghosttyAppName then
+            ghostty = frontmost
+        end
+    end
+
+    if not ghostty then
+        alert("Claudeboard: Ghostty app handle is unavailable")
         return
     end
 
-    ghostty:activate()
+    if not isGhosttyFrontmost() then
+        ghostty:activate()
+    end
+
     hs.timer.doAfter(config.typeDelaySeconds, function()
         if not isGhosttyFrontmost() then
             alert("Claudeboard: Ghostty is no longer focused")
@@ -68,61 +55,184 @@ local function typeIntoGhostty(remotePath)
     end)
 end
 
-local function clearPendingRequest(requestId)
-    pendingRequests[requestId] = nil
-
-    if requestTimers[requestId] then
-        requestTimers[requestId]:stop()
-        requestTimers[requestId] = nil
+local function clearActiveRequest(requestId)
+    if requestId and activeRequestId ~= requestId then
+        return
     end
 
-    if activeRequestId == requestId then
-        activeRequestId = nil
+    activeRequestId = nil
+
+    if activeRequestTimer then
+        activeRequestTimer:stop()
+        activeRequestTimer = nil
     end
 end
 
-server:setInterface(config.serverInterface)
-server:setPort(config.serverPort)
-server:setCallback(function(method, path, headers, body)
-    if method ~= "POST" or path ~= config.callbackPath then
-        return "not found", 404, { ["Content-Type"] = "text/plain" }
+local function decodeJson(body)
+    if type(body) ~= "string" or body == "" then
+        return nil
     end
 
-    local ok, payload = pcall(hs.json.decode, body or "")
-    if not ok or type(payload) ~= "table" then
-        return "invalid json", 400, { ["Content-Type"] = "text/plain" }
+    local trimmed = body:match("^%s*(.-)%s*$")
+    if trimmed:sub(1, 1) ~= "{" then
+        return nil
     end
 
-    local requestId = payload.requestId
-    if type(requestId) ~= "string" or requestId == "" then
-        return "missing requestId", 400, { ["Content-Type"] = "text/plain" }
+    local ok, payload = pcall(hs.json.decode, trimmed)
+    if ok and type(payload) == "table" then
+        return payload
     end
 
-    if not pendingRequests[requestId] then
-        return "unknown request", 404, { ["Content-Type"] = "text/plain" }
+    return nil
+end
+
+local function shellQuote(value)
+    return "'" .. string.gsub(value, "'", "'\"'\"'") .. "'"
+end
+
+local function loadBridgeCandidates()
+    local command = "/bin/ls -1 " .. shellQuote(config.registryDir) .. "/*.json 2>/dev/null"
+    local pipe = io.popen(command)
+    if not pipe then
+        return {}
     end
 
-    clearPendingRequest(requestId)
+    local output = pipe:read("*a")
+    pipe:close()
 
-    if payload.ok then
-        local remotePath = payload.remotePath
-        if type(remotePath) ~= "string" or remotePath == "" then
-            alert("Claudeboard: callback was missing the remote path")
-            return "missing remotePath", 400, { ["Content-Type"] = "text/plain" }
+    local candidates = {}
+    for filePath in string.gmatch(output, "[^\r\n]+") do
+        local file = io.open(filePath, "r")
+        if file then
+            local body = file:read("*a")
+            file:close()
+
+            local payload = decodeJson(body)
+            if payload
+                and type(payload.port) == "number"
+                and type(payload.uriScheme) == "string"
+                and type(payload.priority) == "number"
+                and type(payload.updatedAt) == "number" then
+                payload.registryPath = filePath
+                table.insert(candidates, payload)
+            end
+        end
+    end
+
+    table.sort(candidates, function(left, right)
+        if left.priority ~= right.priority then
+            return left.priority < right.priority
         end
 
-        typeIntoGhostty(remotePath)
-        return "ok", 200, { ["Content-Type"] = "text/plain" }
+        if left.focused ~= right.focused then
+            return left.focused == true
+        end
+
+        return (left.updatedAt or 0) > (right.updatedAt or 0)
+    end)
+
+    return candidates
+end
+
+local function removeBridgeCandidate(candidate)
+    if not candidate or type(candidate.registryPath) ~= "string" then
+        return
     end
 
-    local errorMessage = payload.error or "Upload failed"
-    alert("Claudeboard: " .. errorMessage)
-    return "ok", 200, { ["Content-Type"] = "text/plain" }
-end)
+    os.remove(candidate.registryPath)
+end
 
-if not server:start() then
-    alert("Claudeboard: failed to start localhost callback server")
-    return
+local function tryBridgeUpload(candidates, candidateIndex, requestId, imageBase64)
+    local candidate = candidates[candidateIndex]
+    if not candidate then
+        clearActiveRequest(requestId)
+        alert("Claudeboard: no reachable IDE bridge is available")
+        return
+    end
+
+    local uploadUrl = buildBridgeUrl(candidate.port, config.bridgeUploadPath)
+    local requestBody = hs.json.encode({
+        action = "uploadClipboardImage",
+        requestId = requestId,
+        imageData = imageBase64,
+    })
+
+    if type(requestBody) ~= "string" or requestBody == "" then
+        clearActiveRequest(requestId)
+        alert("Claudeboard: failed to encode bridge request")
+        return
+    end
+
+    hs.http.asyncPost(
+        uploadUrl,
+        requestBody,
+        { ["Content-Type"] = "application/json" },
+        function(status, responseBody, headers)
+            if activeRequestId ~= requestId then
+                return
+            end
+
+            if status < 0 then
+                removeBridgeCandidate(candidate)
+                tryBridgeUpload(candidates, candidateIndex + 1, requestId, imageBase64)
+                return
+            end
+
+            local payload = decodeJson(responseBody)
+
+            if not payload or payload.requestId ~= requestId then
+                removeBridgeCandidate(candidate)
+                tryBridgeUpload(candidates, candidateIndex + 1, requestId, imageBase64)
+                return
+            end
+
+            clearActiveRequest(requestId)
+
+            if payload.ok then
+                if type(payload.remotePath) ~= "string" or payload.remotePath == "" then
+                    alert("Claudeboard: response was missing remotePath")
+                    return
+                end
+
+                typeIntoGhostty(payload.remotePath)
+                return
+            end
+
+            alert("Claudeboard: " .. tostring(payload.error or "Upload failed"))
+        end
+    )
+end
+
+local function checkClipboardHasImage()
+    local types = hs.pasteboard.contentTypes()
+    if not types or #types == 0 then
+        return false, "clipboard is empty"
+    end
+
+    for _, uti in ipairs(types) do
+        if uti == "public.png"
+            or uti == "public.tiff"
+            or uti == "public.jpeg"
+            or string.find(uti, "^public%.image") then
+            return true, nil
+        end
+    end
+
+    return false, "clipboard does not contain an image"
+end
+
+local function readClipboardImageBase64()
+    local image = hs.pasteboard.readImage()
+    if not image then
+        return nil
+    end
+
+    local dataUrl = image:encodeAsURLString()
+    if not dataUrl or dataUrl == "" then
+        return nil
+    end
+
+    return string.match(dataUrl, "base64,(.+)")
 end
 
 local function startGhosttyUpload()
@@ -135,66 +245,49 @@ local function startGhosttyUpload()
         return
     end
 
-    local requestId = string.format("%d-%d", math.floor(hs.timer.secondsSinceEpoch()), math.random(100000, 999999))
-    pendingRequests[requestId] = true
-    activeRequestId = requestId
+    activeGhosttyApp = hs.application.frontmostApplication()
+    if not activeGhosttyApp then
+        alert("Claudeboard: failed to capture Ghostty application")
+        return
+    end
 
-    requestTimers[requestId] = hs.timer.doAfter(config.requestTimeoutSeconds, function()
-        if pendingRequests[requestId] then
-            clearPendingRequest(requestId)
+    local hasImage, reason = checkClipboardHasImage()
+    if not hasImage then
+        alert("Claudeboard: " .. reason)
+        return
+    end
+
+    local imageBase64 = readClipboardImageBase64()
+    if not imageBase64 then
+        alert("Claudeboard: failed to read clipboard image")
+        return
+    end
+
+    local requestId = string.format("%d-%d", math.floor(hs.timer.secondsSinceEpoch()), math.random(100000, 999999))
+    activeRequestId = requestId
+    activeRequestTimer = hs.timer.doAfter(config.requestTimeoutSeconds, function()
+        if activeRequestId == requestId then
+            clearActiveRequest(requestId)
             alert("Claudeboard: upload timed out")
         end
     end)
 
-    local uri = buildVscodeUri(requestId)
-    local task = hs.task.new("/usr/bin/open", function(exitCode, stdOut, stdErr)
-        if exitCode ~= 0 and pendingRequests[requestId] then
-            clearPendingRequest(requestId)
-            alert("Claudeboard: failed to open VS Code")
-        end
-    end, { "-g", uri })
-    if not task or not task:start() then
-        clearPendingRequest(requestId)
-        alert("Claudeboard: failed to open VS Code")
+    local candidates = loadBridgeCandidates()
+    if #candidates == 0 then
+        clearActiveRequest(requestId)
+        alert("Claudeboard: no IDE bridge is available")
+        return
     end
+
+    tryBridgeUpload(candidates, 1, requestId, imageBase64)
 end
 
-local function disableGhosttyHotkey()
-    if ghosttyHotkey then
-        ghosttyHotkey:disable()
-    end
-end
-
-local function enableGhosttyHotkey()
-    if not ghosttyHotkey then
-        ghosttyHotkey = hs.hotkey.new(
-            config.hotkey.mods,
-            config.hotkey.key,
-            startGhosttyUpload
-        )
+uploadHotkey = hs.hotkey.bind(config.hotkey.mods, config.hotkey.key, function()
+    if not isGhosttyFrontmost() then
+        return
     end
 
-    ghosttyHotkey:enable()
-end
-
-local function syncGhosttyHotkey()
-    if isGhosttyFrontmost() then
-        enableGhosttyHotkey()
-    else
-        disableGhosttyHotkey()
-    end
-end
-
-appWatcher = hs.application.watcher.new(function(appName, eventType)
-    if eventType == hs.application.watcher.activated
-        or eventType == hs.application.watcher.deactivated
-        or eventType == hs.application.watcher.hidden
-        or eventType == hs.application.watcher.unhidden then
-        syncGhosttyHotkey()
-    end
+    startGhosttyUpload()
 end)
-
-appWatcher:start()
-syncGhosttyHotkey()
 
 alert("Claudeboard Ghostty bridge loaded")
