@@ -1,5 +1,5 @@
 local config = {
-    hotkey = { mods = { "ctrl", "alt" }, key = "v" },
+    hotkey = { mods = { "cmd", "alt" }, key = "v" },
     ghosttyAppName = "Ghostty",
     registryDir = os.getenv("HOME") .. "/.claudeboard/ghostty-bridges",
     bridgeUploadPath = "/ghostty-upload",
@@ -9,10 +9,13 @@ local config = {
 
 math.randomseed(os.time())
 
-local uploadHotkey = nil
+local keyInterceptor = nil
+local appWatcher = nil
 local activeRequestId = nil
 local activeRequestTimer = nil
 local activeGhosttyApp = nil
+local uploadShortcutKeyCode = hs.keycodes.map[config.hotkey.key]
+local suppressUploadKeyUp = false
 
 local function alert(message)
     hs.alert.show(message, 2)
@@ -282,12 +285,71 @@ local function startGhosttyUpload()
     tryBridgeUpload(candidates, 1, requestId, imageBase64)
 end
 
-uploadHotkey = hs.hotkey.bind(config.hotkey.mods, config.hotkey.key, function()
-    if not isGhosttyFrontmost() then
+local function isConfiguredHotkey(event)
+    local flags = event:getFlags()
+
+    return event:getKeyCode() == uploadShortcutKeyCode
+        and flags.cmd == true
+        and flags.alt == true
+        and not flags.ctrl
+        and not flags.shift
+        and not flags.fn
+end
+
+local function syncKeyInterceptorState()
+    if not keyInterceptor then
         return
     end
 
-    startGhosttyUpload()
+    if isGhosttyFrontmost() then
+        keyInterceptor:start()
+        return
+    end
+
+    suppressUploadKeyUp = false
+    keyInterceptor:stop()
+end
+
+keyInterceptor = hs.eventtap.new({
+    hs.eventtap.event.types.keyDown,
+    hs.eventtap.event.types.keyUp,
+}, function(event)
+    local eventType = event:getType()
+
+    if eventType == hs.eventtap.event.types.keyDown then
+        if not isConfiguredHotkey(event) then
+            return false
+        end
+
+        if not isGhosttyFrontmost() then
+            return false
+        end
+
+        suppressUploadKeyUp = true
+        startGhosttyUpload()
+        return true
+    end
+
+    if eventType == hs.eventtap.event.types.keyUp
+        and suppressUploadKeyUp
+        and event:getKeyCode() == uploadShortcutKeyCode then
+        suppressUploadKeyUp = false
+        return true
+    end
+
+    return false
 end)
+
+appWatcher = hs.application.watcher.new(function(_, eventType, _)
+    if eventType == hs.application.watcher.activated
+        or eventType == hs.application.watcher.deactivated
+        or eventType == hs.application.watcher.hidden
+        or eventType == hs.application.watcher.unhidden then
+        syncKeyInterceptorState()
+    end
+end)
+appWatcher:start()
+
+syncKeyInterceptorState()
 
 alert("Claudeboard Ghostty bridge loaded")

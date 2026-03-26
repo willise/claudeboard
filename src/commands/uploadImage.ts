@@ -7,8 +7,23 @@ import { Result, success, failure, ExtensionResult, ClipboardError, FileSystemEr
 
 export type InsertDestination = 'editor' | 'terminal';
 
+export interface LockedInsertTarget {
+    terminal?: vscode.Terminal;
+    editor?: {
+        editor: vscode.TextEditor;
+        position: vscode.Position;
+    };
+}
+
+export interface ExecuteUploadCommandOptions {
+    lockedInsertTarget?: LockedInsertTarget;
+}
+
 export interface UploadImageCommand {
-    execute(destination: InsertDestination): Promise<ExtensionResult<string>>;
+    execute(
+        destination: InsertDestination,
+        options?: ExecuteUploadCommandOptions
+    ): Promise<ExtensionResult<string>>;
 }
 
 export interface CommandDependencies {
@@ -29,7 +44,10 @@ export interface FinalizeUploadOptions {
 class ClaudeboardUploadCommand implements UploadImageCommand {
     constructor(private readonly deps: CommandDependencies) {}
 
-    async execute(destination: InsertDestination): Promise<ExtensionResult<string>> {
+    async execute(
+        destination: InsertDestination,
+        options: ExecuteUploadCommandOptions = {}
+    ): Promise<ExtensionResult<string>> {
         const uploadResult = await uploadClipboardImage(this.deps, {
             progressTitle: 'Uploading image to Server...'
         });
@@ -39,7 +57,7 @@ class ClaudeboardUploadCommand implements UploadImageCommand {
         }
 
         const imageUrl = uploadResult.data;
-        const insertResult = await insertImageUrl(imageUrl, destination);
+        const insertResult = await insertImageUrl(imageUrl, destination, options.lockedInsertTarget);
         if (Result.isFailure(insertResult)) {
             return insertResult;
         }
@@ -172,26 +190,27 @@ export async function finalizeUploadedImage(
 
 export async function insertImageUrl(
     url: string,
-    destination: InsertDestination
+    destination: InsertDestination,
+    lockedInsertTarget?: LockedInsertTarget
 ): Promise<ExtensionResult<void>> {
     try {
         if (destination === 'editor') {
-            const activeEditor = vscode.window.activeTextEditor;
-            if (!activeEditor) {
+            const targetEditor = lockedInsertTarget?.editor?.editor ?? vscode.window.activeTextEditor;
+            if (!targetEditor) {
                 return failure(new FileSystemError('No active editor available'));
             }
 
-            const position = activeEditor.selection.active;
-            await activeEditor.edit(editBuilder => {
+            const position = lockedInsertTarget?.editor?.position ?? targetEditor.selection.active;
+            await targetEditor.edit(editBuilder => {
                 editBuilder.insert(position, url);
             });
         } else {
-            const activeTerminal = vscode.window.activeTerminal;
-            if (!activeTerminal) {
+            const targetTerminal = lockedInsertTarget?.terminal ?? vscode.window.activeTerminal;
+            if (!targetTerminal) {
                 return failure(new FileSystemError('No active terminal available'));
             }
 
-            activeTerminal.sendText(url, false);
+            targetTerminal.sendText(url, false);
         }
 
         return success(undefined);
@@ -207,12 +226,34 @@ export function createUploadImageCommand(deps: CommandDependencies): UploadImage
     return new ClaudeboardUploadCommand(deps);
 }
 
+export function captureLockedInsertTarget(destination: InsertDestination): LockedInsertTarget {
+    if (destination === 'terminal') {
+        const terminal = vscode.window.activeTerminal;
+        return terminal ? { terminal } : {};
+    }
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        return {};
+    }
+
+    const activePosition = editor.selection.active;
+    return {
+        editor: {
+            editor,
+            position: new vscode.Position(activePosition.line, activePosition.character)
+        }
+    };
+}
+
 export async function handleUploadCommand(
     destination: InsertDestination,
     deps: CommandDependencies
 ): Promise<void> {
     const command = createUploadImageCommand(deps);
-    const result = await command.execute(destination);
+    const result = await command.execute(destination, {
+        lockedInsertTarget: captureLockedInsertTarget(destination)
+    });
 
     if (Result.isFailure(result)) {
         vscode.window.showErrorMessage(`Upload error: ${result.error.message}`);

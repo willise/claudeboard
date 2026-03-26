@@ -34,11 +34,13 @@ If you work in Ghostty on macOS, you can keep the same clipboard-image workflow 
 1. Install [Hammerspoon](https://www.hammerspoon.org/) and grant it Accessibility permission in System Settings.
 2. Copy [`examples/hammerspoon/init.lua`](examples/hammerspoon/init.lua) to `~/.hammerspoon/init.lua`.
 3. Keep VS Code or Trae connected to the same Remote-SSH workspace you are using in Ghostty.
-4. Focus Ghostty and press `Ctrl+Alt+V`.
+4. Focus Ghostty and press `Cmd+Alt+V`.
 
 The example script requires no local Node.js runtime. It reads active Claudeboard bridge registrations from `~/.claudeboard/ghostty-bridges`, connects to the selected localhost bridge directly, and does not switch focus to the IDE window.
 
-The Hammerspoon example consumes `Ctrl+Alt+V` through `hs.hotkey.bind`, so Ghostty and terminal apps should not receive that shortcut themselves.
+The Hammerspoon example enables its `hs.eventtap` interceptor only while Ghostty is frontmost, and stops interception immediately in other applications.
+
+By default, Ghostty uses `Cmd+Alt+V` in the Hammerspoon script, while VS Code keeps `Ctrl+Alt+V`.
 
 Selection rules:
 
