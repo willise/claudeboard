@@ -64,6 +64,10 @@
 			{
 				"command": "imageUploader.uploadFromClipboard.terminal",
 				"title": "Upload Image from Clipboard (Terminal)"
+			},
+			{
+				"command": "imageUploader.showGhosttyBridgeStatus",
+				"title": "Claudeboard: Show Ghostty Bridge Status"
 			}
 		],
 		"keybindings": [

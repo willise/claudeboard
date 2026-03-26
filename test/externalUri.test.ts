@@ -3,19 +3,18 @@ import assert from 'node:assert/strict';
 
 import { parseExternalUploadUri } from '../src/services/externalUri';
 
-test('parses a valid ghostty upload URI', () => {
+test('rejects the deprecated ghostty vscode uri flow', () => {
     const parsed = parseExternalUploadUri('/ghostty-upload', new URLSearchParams({
         requestId: 'req-123',
         callback: 'http://127.0.0.1:47831/done'
     }));
 
-    assert.equal(parsed.success, true);
-    if (!parsed.success) {
+    assert.equal(parsed.success, false);
+    if (parsed.success) {
         return;
     }
 
-    assert.equal(parsed.data.requestId, 'req-123');
-    assert.equal(parsed.data.callbackUrl, 'http://127.0.0.1:47831/done');
+    assert.match(parsed.error.message, /deprecated|hammerspoon|bridge/i);
 });
 
 test('rejects unsupported uri paths', () => {

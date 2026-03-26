@@ -7,6 +7,8 @@ export interface ExternalUploadRequest {
 
 const SUPPORTED_PATH = '/ghostty-upload';
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+const GHOSTTY_URI_DEPRECATION_MESSAGE =
+    'The vscode:// Ghostty upload flow is deprecated. Replace your Hammerspoon config with the bridge-based script from examples/hammerspoon/init.lua.';
 
 export function parseExternalUploadUri(
     path: string,
@@ -40,10 +42,14 @@ export function parseExternalUploadUri(
         return callbackValidation;
     }
 
-    return success({
-        requestId,
-        callbackUrl: callbackValidation.data
-    });
+    return failure(new ValidationError(
+        GHOSTTY_URI_DEPRECATION_MESSAGE,
+        {
+            path,
+            requestId,
+            callbackUrl: callbackValidation.data
+        }
+    ));
 }
 
 export function validateLoopbackCallbackUrl(callbackUrl: string): ValidationResult<string> {

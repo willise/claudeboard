@@ -8,11 +8,21 @@ import {
     CommandDependencies,
     InsertDestination,
     uploadClipboardImage,
+    uploadImageFromBuffer,
     finalizeUploadedImage
 } from './commands/uploadImage';
 import { postExternalUploadResult } from './services/callbackClient';
 import { parseExternalUploadUri, validateLoopbackCallbackUrl } from './services/externalUri';
 import { Result } from './common/result';
+import {
+    getDefaultGhosttyBridgeRegistryDir,
+    resolveIdeBridgeInfo,
+    startGhosttyBridgeServer
+} from './services/ghosttyBridge';
+import {
+    GhosttyBridgeStatusSnapshot,
+    formatGhosttyBridgeStatus
+} from './services/ghosttyBridgeStatus';
 
 // Main extension entry point
 export function activate(context: vscode.ExtensionContext): void {
@@ -53,6 +63,82 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     });
 
+    const ideBridgeInfo = resolveIdeBridgeInfo(vscode.env.uriScheme, context.extension.id);
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const registryDir = getDefaultGhosttyBridgeRegistryDir();
+    const bridgeStatus: GhosttyBridgeStatusSnapshot = {
+        state: 'starting',
+        ideScheme: ideBridgeInfo.uriScheme,
+        workspaceFolder,
+        registryDir
+    };
+
+    void startGhosttyBridgeServer({
+        host: '127.0.0.1',
+        ideInfo: ideBridgeInfo,
+        workspaceFolder,
+        focused: vscode.window.state.focused,
+        onUpload: async (imageData: Buffer) => {
+            const uploadResult = await uploadImageFromBuffer(dependencies, imageData, {
+                progressTitle: 'Uploading image for Ghostty...'
+            });
+
+            if (Result.isSuccess(uploadResult)) {
+                await finalizeUploadedImage(dependencies, uploadResult.data);
+            }
+
+            return uploadResult;
+        },
+        onError: (error) => {
+            bridgeStatus.state = 'failed';
+            bridgeStatus.error = error.message;
+            console.warn('Claudeboard Ghostty bridge error:', error);
+        }
+    }).then((ghosttyBridgeServer) => {
+        bridgeStatus.state = 'running';
+        bridgeStatus.port = ghosttyBridgeServer.port;
+        bridgeStatus.registryPath = ghosttyBridgeServer.registryPath;
+        bridgeStatus.error = undefined;
+
+        const windowStateDisposable = vscode.window.onDidChangeWindowState((windowState) => {
+            void ghosttyBridgeServer.updateWindowState(windowState.focused).catch((error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                bridgeStatus.state = 'failed';
+                bridgeStatus.error = message;
+                console.warn(`Failed to update Claudeboard Ghostty bridge state: ${message}`);
+            });
+        });
+
+        context.subscriptions.push(ghosttyBridgeServer, windowStateDisposable);
+        console.log(
+            `Claudeboard Ghostty bridge listening on 127.0.0.1:${ghosttyBridgeServer.port} for ${ghosttyBridgeServer.ideInfo.uriScheme}`
+        );
+    }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        bridgeStatus.state = 'failed';
+        bridgeStatus.error = message;
+        console.warn(`Failed to start Claudeboard Ghostty bridge: ${message}`);
+    });
+
+    const showBridgeStatusDisposable = vscode.commands.registerCommand(
+        'imageUploader.showGhosttyBridgeStatus',
+        () => {
+            const message = formatGhosttyBridgeStatus(bridgeStatus);
+
+            if (bridgeStatus.state === 'failed') {
+                void vscode.window.showErrorMessage(message);
+                return;
+            }
+
+            if (bridgeStatus.state === 'starting') {
+                void vscode.window.showWarningMessage(message);
+                return;
+            }
+
+            void vscode.window.showInformationMessage(message);
+        }
+    );
+
     // Register configuration change handler
     const configDisposable = config.onConfigurationChanged((newConfig) => {
         console.log('Extension configuration updated:', newConfig);
@@ -60,7 +146,7 @@ export function activate(context: vscode.ExtensionContext): void {
     });
 
     // Add all disposables to context
-    context.subscriptions.push(...disposables, configDisposable, uriHandlerDisposable);
+    context.subscriptions.push(...disposables, configDisposable, uriHandlerDisposable, showBridgeStatusDisposable);
 
     // Warm up clipboard service for better first-use experience
     clipboard.warmUp().catch(() => {

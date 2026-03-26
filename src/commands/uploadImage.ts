@@ -82,6 +82,37 @@ export async function checkClipboard(
     }
 }
 
+export async function uploadImageFromBuffer(
+    deps: CommandDependencies,
+    imageBuffer: Buffer,
+    options: UploadClipboardImageOptions = {}
+): Promise<ExtensionResult<string>> {
+    const remoteCheck = validateRemoteConnection();
+    if (Result.isFailure(remoteCheck)) {
+        return remoteCheck;
+    }
+
+    return await deps.progress.withProgress(
+        options.progressTitle ?? 'Uploading image...',
+        async (reporter) => {
+            try {
+                reporter.report(ProgressSteps.preparing());
+                const retentionDays = deps.config.getRetentionDays();
+                await deps.fileManager.cleanupOldImages(retentionDays);
+
+                reporter.report(ProgressSteps.uploading());
+                const imageFile = await deps.fileManager.createImageFile(imageBuffer, 'png');
+                return success(imageFile.getPath());
+            } catch (error) {
+                return failure(new FileSystemError(
+                    'Failed to upload image',
+                    { originalError: error }
+                ));
+            }
+        }
+    );
+}
+
 export async function uploadClipboardImage(
     deps: CommandDependencies,
     options: UploadClipboardImageOptions = {}
