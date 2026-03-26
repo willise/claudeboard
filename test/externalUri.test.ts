@@ -15,6 +15,8 @@ test('rejects the deprecated ghostty vscode uri flow', () => {
     }
 
     assert.match(parsed.error.message, /deprecated|hammerspoon|bridge/i);
+    assert.equal(parsed.error.context?.requestId, 'req-123');
+    assert.equal(parsed.error.context?.callbackUrl, 'http://127.0.0.1:47831/done');
 });
 
 test('rejects unsupported uri paths', () => {

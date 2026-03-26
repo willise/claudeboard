@@ -7,7 +7,6 @@ import {
     handleUploadCommand,
     CommandDependencies,
     InsertDestination,
-    uploadClipboardImage,
     uploadImageFromBuffer,
     finalizeUploadedImage
 } from './commands/uploadImage';
@@ -39,27 +38,20 @@ export function activate(context: vscode.ExtensionContext): void {
         config
     };
 
-    // Register commands
-    const commands = [
-        {
-            id: 'imageUploader.uploadFromClipboard.editor',
-            destination: 'editor' as InsertDestination
-        },
-        {
-            id: 'imageUploader.uploadFromClipboard.terminal',
-            destination: 'terminal' as InsertDestination
-        }
-    ];
-
-    const disposables = commands.map(({ id, destination }) =>
-        vscode.commands.registerCommand(id, () => 
-            handleUploadCommand(destination, dependencies)
-        )
+    const editorCommandDisposable = registerUploadCommand(
+        'imageUploader.uploadFromClipboard.editor',
+        'editor',
+        dependencies
+    );
+    const terminalCommandDisposable = registerUploadCommand(
+        'imageUploader.uploadFromClipboard.terminal',
+        'terminal',
+        dependencies
     );
 
     const uriHandlerDisposable = vscode.window.registerUriHandler({
         handleUri: async (uri) => {
-            await handleExternalUploadUri(uri, dependencies);
+            await handleExternalUploadUri(uri);
         }
     });
 
@@ -146,7 +138,13 @@ export function activate(context: vscode.ExtensionContext): void {
     });
 
     // Add all disposables to context
-    context.subscriptions.push(...disposables, configDisposable, uriHandlerDisposable, showBridgeStatusDisposable);
+    context.subscriptions.push(
+        editorCommandDisposable,
+        terminalCommandDisposable,
+        configDisposable,
+        uriHandlerDisposable,
+        showBridgeStatusDisposable
+    );
 
     // Warm up clipboard service for better first-use experience
     clipboard.warmUp().catch(() => {
@@ -161,8 +159,7 @@ export function deactivate(): void {
 }
 
 async function handleExternalUploadUri(
-    uri: vscode.Uri,
-    deps: CommandDependencies
+    uri: vscode.Uri
 ): Promise<void> {
     const searchParams = new URLSearchParams(uri.query);
     const parsedRequest = parseExternalUploadUri(uri.path, searchParams);
@@ -170,46 +167,7 @@ async function handleExternalUploadUri(
     if (Result.isFailure(parsedRequest)) {
         await notifyExternalUploadErrorFromUri(searchParams, parsedRequest.error.message);
         vscode.window.showErrorMessage(`External upload error: ${parsedRequest.error.message}`);
-        return;
     }
-
-    const uploadResult = await uploadClipboardImage(deps, {
-        progressTitle: 'Uploading image for Ghostty...'
-    });
-
-    if (Result.isFailure(uploadResult)) {
-        try {
-            await postExternalUploadResult({
-                callbackUrl: parsedRequest.data.callbackUrl,
-                payload: {
-                    requestId: parsedRequest.data.requestId,
-                    ok: false,
-                    error: uploadResult.error.message
-                }
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            vscode.window.showErrorMessage(`External upload callback failed: ${message}`);
-        }
-        return;
-    }
-
-    try {
-        await postExternalUploadResult({
-            callbackUrl: parsedRequest.data.callbackUrl,
-            payload: {
-                requestId: parsedRequest.data.requestId,
-                ok: true,
-                remotePath: uploadResult.data
-            }
-        });
-    } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        vscode.window.showErrorMessage(`External upload callback failed: ${message}`);
-        return;
-    }
-
-    await finalizeUploadedImage(deps, uploadResult.data);
 }
 
 async function notifyExternalUploadErrorFromUri(
@@ -240,4 +198,14 @@ async function notifyExternalUploadErrorFromUri(
     } catch {
         // Best effort: if we cannot notify the callback, the helper will time out.
     }
+}
+
+function registerUploadCommand(
+    id: string,
+    destination: InsertDestination,
+    deps: CommandDependencies
+): vscode.Disposable {
+    return vscode.commands.registerCommand(id, () => {
+        void handleUploadCommand(destination, deps);
+    });
 }

@@ -1,10 +1,5 @@
 import { ValidationResult, success, failure, ValidationError } from '../common/result';
 
-export interface ExternalUploadRequest {
-    requestId: string;
-    callbackUrl: string;
-}
-
 const SUPPORTED_PATH = '/ghostty-upload';
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 const GHOSTTY_URI_DEPRECATION_MESSAGE =
@@ -13,7 +8,7 @@ const GHOSTTY_URI_DEPRECATION_MESSAGE =
 export function parseExternalUploadUri(
     path: string,
     searchParams: URLSearchParams
-): ValidationResult<ExternalUploadRequest> {
+): ValidationResult<never> {
     if (path !== SUPPORTED_PATH) {
         return failure(new ValidationError(
             `Unsupported external upload path: ${path}`,

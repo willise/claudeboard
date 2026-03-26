@@ -38,7 +38,7 @@ If you work in Ghostty on macOS, you can keep the same clipboard-image workflow 
 
 The example script requires no local Node.js runtime. It reads active Claudeboard bridge registrations from `~/.claudeboard/ghostty-bridges`, connects to the selected localhost bridge directly, and does not switch focus to the IDE window.
 
-The Hammerspoon example enables its `hs.eventtap` interceptor only while Ghostty is frontmost, and stops interception immediately in other applications.
+The Hammerspoon example uses `hs.hotkey.bind` to reserve `Cmd+Alt+V` for the Ghostty upload flow.
 
 By default, Ghostty uses `Cmd+Alt+V` in the Hammerspoon script, while VS Code keeps `Ctrl+Alt+V`.
 
