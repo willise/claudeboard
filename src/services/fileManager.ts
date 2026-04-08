@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { Disposable } from './clipboard';
+import { inferHomeDirectoryFromWorkspacePath } from './homePath';
 
 export interface FileManagerService {
     createImageFile(imageData: Buffer, format: string): Promise<ImageFile>;
@@ -47,8 +48,7 @@ class ManagedImageFile implements ImageFile {
 }
 
 export class WorkspaceFileManager implements FileManagerService {
-    private readonly imageDirPath = '.claude/claude-code-chat-images';
-    private readonly gitignoreContent = '*\n';
+    private readonly imageDirPath = ['.claude', 'claude-code-chat-images'];
 
     private cachedWorkspaceFolder: vscode.WorkspaceFolder | null = null;
     private cachedImagesDir: vscode.Uri | null = null;
@@ -78,8 +78,7 @@ export class WorkspaceFileManager implements FileManagerService {
             
             const deletePromises = files
                 .filter(([fileName, fileType]) => 
-                    fileType === vscode.FileType.File && 
-                    fileName !== '.gitignore' && 
+                    fileType === vscode.FileType.File &&
                     this.isOldImageFile(fileName, cutoffTime)
                 )
                 .map(([fileName]) => {
@@ -99,14 +98,12 @@ export class WorkspaceFileManager implements FileManagerService {
 
     async ensureDirectoryExists(): Promise<void> {
         const imagesDir = await this.getImagesDirectory();
-        
+
         try {
             await vscode.workspace.fs.createDirectory(imagesDir);
         } catch {
             // Directory might already exist, ignore error
         }
-
-        await this.ensureGitignoreExists(imagesDir);
     }
 
     private async getWorkspaceFolder(): Promise<vscode.WorkspaceFolder> {
@@ -123,7 +120,15 @@ export class WorkspaceFileManager implements FileManagerService {
     private async getImagesDirectory(): Promise<vscode.Uri> {
         if (!this.cachedImagesDir) {
             const workspaceFolder = await this.getWorkspaceFolder();
-            this.cachedImagesDir = vscode.Uri.joinPath(workspaceFolder.uri, ...this.imageDirPath.split('/'));
+            const homeDirectory = inferHomeDirectoryFromWorkspacePath(workspaceFolder.uri.fsPath);
+            if (!homeDirectory) {
+                throw new Error(
+                    `Unable to infer remote home directory from workspace path: ${workspaceFolder.uri.fsPath}`
+                );
+            }
+
+            const homeUri = workspaceFolder.uri.with({ path: homeDirectory });
+            this.cachedImagesDir = vscode.Uri.joinPath(homeUri, ...this.imageDirPath);
         }
         return this.cachedImagesDir;
     }
@@ -141,18 +146,6 @@ export class WorkspaceFileManager implements FileManagerService {
 
         const fileTimestamp = parseInt(match[1], 10);
         return fileTimestamp < cutoffTime;
-    }
-
-    private async ensureGitignoreExists(imagesDir: vscode.Uri): Promise<void> {
-        const gitignorePath = vscode.Uri.joinPath(imagesDir, '.gitignore');
-        
-        try {
-            await vscode.workspace.fs.stat(gitignorePath);
-        } catch {
-            // .gitignore doesn't exist, create it
-            const gitignoreData = new TextEncoder().encode(this.gitignoreContent);
-            await vscode.workspace.fs.writeFile(gitignorePath, gitignoreData);
-        }
     }
 }
 

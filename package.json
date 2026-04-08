@@ -48,6 +48,7 @@
 		"ai"
 	],
 	"activationEvents": [
+		"onStartupFinished",
 		"onFileSystem:vscode-remote",
 		"onUri"
 	],

@@ -38,6 +38,8 @@ If you work in Ghostty on macOS, you can keep the same clipboard-image workflow 
 
 The example script requires no local Node.js runtime. It reads active Claudeboard bridge registrations from `~/.claudeboard/ghostty-bridges`, connects to the selected localhost bridge directly, and does not switch focus to the IDE window.
 
+Ghostty bridge uploads are handled without IDE notification UI, so the upload can finish while Trae or VS Code stays in the background.
+
 The Hammerspoon example uses `hs.hotkey.bind` to reserve `Cmd+Alt+V` for the Ghostty upload flow.
 
 By default, Ghostty uses `Cmd+Alt+V` in the Hammerspoon script, while VS Code keeps `Ctrl+Alt+V`.
@@ -53,11 +55,10 @@ The example is intentionally small and self-contained. If your Ghostty app name 
 ## 🌐 Upload Destination
 
 ### Remote Server Upload
-- **Location**: `.claude/claude-code-chat-images/` in workspace root
+- **Location**: `~/.claude/claude-code-chat-images/`
 - **Automatic cleanup**: Files older than 30 days are automatically deleted
-- **Git ignored**: Images are automatically excluded from git commits
 - **Secure**: Uses existing Remote-SSH connection, no additional authentication needed
-- **Returns**: Full file path (e.g., `/workspace/.claude/claude-code-chat-images/image_1234567890.png`)
+- **Returns**: Full file path (e.g., `/home/your-user/.claude/claude-code-chat-images/image_1234567890.png`)
 
 ## ⚙️ Configuration
 
@@ -102,7 +103,7 @@ Control how long uploaded images are kept:
 
 - **PNG** (automatic conversion from clipboard)
 - **Automatic cleanup** after 30 days
-- **Workspace integration** with `.claude/` directory structure
+- **Stored in remote home** under `~/.claude/claude-code-chat-images/`
 
 ## ⌨️ Keyboard Shortcuts
 
@@ -137,18 +138,16 @@ Control how long uploaded images are kept:
 | PowerShell error | Check if PowerShell is available and ExecutionPolicy allows execution |
 | Upload timeout | Check Remote-SSH connection stability |
 | Paste error | Make sure cursor is in text editor or terminal |
-| File permission error | Check write permissions in workspace directory |
+| File permission error | Check write permissions in `~/.claude/claude-code-chat-images` |
 
 ## 📁 File Organization
 
 ```
-workspace/
-├── .claude/
-│   └── claude-code-chat-images/
-│       ├── .gitignore          # Automatically created
-│       ├── image_1234567890.png
-│       └── image_1234567891.png
-└── your-project-files/
+~/
+└── .claude/
+    └── claude-code-chat-images/
+        ├── image_1234567890.png
+        └── image_1234567891.png
 ```
 
 ## 🛠️ Development

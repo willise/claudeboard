@@ -3,6 +3,7 @@ import { createClipboardService } from './services/clipboard';
 import { createFileManager } from './services/fileManager';
 import { createProgressService } from './services/progress';
 import { createConfigurationService } from './services/configuration';
+import { createDailyCleanupScheduler } from './services/cleanupScheduler';
 import {
     handleUploadCommand,
     CommandDependencies,
@@ -38,6 +39,11 @@ export function activate(context: vscode.ExtensionContext): void {
         config
     };
 
+    const cleanupSchedulerDisposable = createDailyCleanupScheduler({
+        fileManager,
+        getRetentionDays: () => config.getRetentionDays()
+    });
+
     const editorCommandDisposable = registerUploadCommand(
         'imageUploader.uploadFromClipboard.editor',
         'editor',
@@ -72,7 +78,8 @@ export function activate(context: vscode.ExtensionContext): void {
         focused: vscode.window.state.focused,
         onUpload: async (imageData: Buffer) => {
             const uploadResult = await uploadImageFromBuffer(dependencies, imageData, {
-                progressTitle: 'Uploading image for Ghostty...'
+                progressTitle: 'Uploading image for Ghostty...',
+                executionMode: 'background'
             });
 
             if (Result.isSuccess(uploadResult)) {
@@ -143,7 +150,8 @@ export function activate(context: vscode.ExtensionContext): void {
         terminalCommandDisposable,
         configDisposable,
         uriHandlerDisposable,
-        showBridgeStatusDisposable
+        showBridgeStatusDisposable,
+        cleanupSchedulerDisposable
     );
 
     // Warm up clipboard service for better first-use experience

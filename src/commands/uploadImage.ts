@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { ClipboardService, ImageData } from '../services/clipboard';
 import { FileManagerService } from '../services/fileManager';
-import { ProgressService, ProgressSteps } from '../services/progress';
+import { ProgressReporter, ProgressService, ProgressSteps } from '../services/progress';
 import { ConfigurationService } from '../services/configuration';
+import { hasRemoteContext } from '../services/remoteContext';
 import { Result, success, failure, ExtensionResult, ClipboardError, FileSystemError } from '../common/result';
 
 export type InsertDestination = 'editor' | 'terminal';
@@ -35,11 +36,14 @@ export interface CommandDependencies {
 
 export interface UploadClipboardImageOptions {
     progressTitle?: string;
+    executionMode?: UploadExecutionMode;
 }
 
 export interface FinalizeUploadOptions {
     showSuccessMessage?: boolean;
 }
+
+export type UploadExecutionMode = 'interactive' | 'background';
 
 class ClaudeboardUploadCommand implements UploadImageCommand {
     constructor(private readonly deps: CommandDependencies) {}
@@ -71,10 +75,19 @@ class ClaudeboardUploadCommand implements UploadImageCommand {
 }
 
 export function validateRemoteConnection(): ExtensionResult<void> {
-    if (!vscode.env.remoteName) {
+    const workspaceFolderSchemes = (vscode.workspace.workspaceFolders ?? [])
+        .map((folder) => folder.uri.scheme);
+
+    if (!hasRemoteContext({
+        remoteName: vscode.env.remoteName,
+        workspaceFolderSchemes
+    })) {
         return failure(new ClipboardError(
             'No remote connection detected. Please connect to a server using Remote-SSH to upload images.',
-            { remoteName: vscode.env.remoteName }
+            {
+                remoteName: vscode.env.remoteName,
+                workspaceFolderSchemes
+            }
         ));
     }
 
@@ -110,8 +123,9 @@ export async function uploadImageFromBuffer(
         return remoteCheck;
     }
 
-    return await deps.progress.withProgress(
-        options.progressTitle ?? 'Uploading image...',
+    return await runUploadWithMode(
+        deps,
+        options,
         async (reporter) => {
             try {
                 reporter.report(ProgressSteps.preparing());
@@ -140,8 +154,9 @@ export async function uploadClipboardImage(
         return remoteCheck;
     }
 
-    return await deps.progress.withProgress(
-        options.progressTitle ?? 'Uploading image...',
+    return await runUploadWithMode(
+        deps,
+        options,
         async (reporter) => {
             reporter.report(ProgressSteps.custom('Checking clipboard...', 10));
 
@@ -244,6 +259,25 @@ export function captureLockedInsertTarget(destination: InsertDestination): Locke
             position: new vscode.Position(activePosition.line, activePosition.character)
         }
     };
+}
+
+const silentProgressReporter: ProgressReporter = {
+    report() {}
+};
+
+async function runUploadWithMode(
+    deps: CommandDependencies,
+    options: UploadClipboardImageOptions,
+    task: (reporter: ProgressReporter) => Promise<ExtensionResult<string>>
+): Promise<ExtensionResult<string>> {
+    if ((options.executionMode ?? 'interactive') === 'background') {
+        return await task(silentProgressReporter);
+    }
+
+    return await deps.progress.withProgress(
+        options.progressTitle ?? 'Uploading image...',
+        async (reporter) => await task(reporter)
+    );
 }
 
 export async function handleUploadCommand(
