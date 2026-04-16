@@ -1,6 +1,6 @@
 local config = {
     hotkey = { mods = { "cmd", "alt" }, key = "v" },
-    ghosttyAppName = "Ghostty",
+    supportedTerminalAppNames = { "Ghostty", "iTerm2" },
     registryDir = os.getenv("HOME") .. "/.claudeboard/ghostty-bridges",
     bridgeUploadPath = "/ghostty-upload",
     requestTimeoutSeconds = 30,
@@ -12,42 +12,48 @@ math.randomseed(os.time())
 local uploadHotkey = nil
 local activeRequestId = nil
 local activeRequestTimer = nil
-local activeGhosttyApp = nil
 
 local function alert(message)
     hs.alert.show(message, 2)
 end
 
-local function isGhosttyFrontmost()
+local function frontmostAppName()
     local frontmost = hs.application.frontmostApplication()
-    return frontmost and frontmost:name() == config.ghosttyAppName
+    if not frontmost then
+        return nil
+    end
+
+    return frontmost:name()
+end
+
+local function isSupportedTerminalFrontmost()
+    local name = frontmostAppName()
+    if not name then
+        return false
+    end
+
+    for _, appName in ipairs(config.supportedTerminalAppNames) do
+        if name == appName then
+            return true
+        end
+    end
+
+    return false
 end
 
 local function buildBridgeUrl(port, path)
     return string.format("http://127.0.0.1:%d%s", port, path)
 end
 
-local function typeIntoGhostty(remotePath)
-    local ghostty = activeGhosttyApp
-    if not ghostty then
-        local frontmost = hs.application.frontmostApplication()
-        if frontmost and frontmost:name() == config.ghosttyAppName then
-            ghostty = frontmost
-        end
-    end
-
-    if not ghostty then
-        alert("Claudeboard: Ghostty app handle is unavailable")
+local function typeIntoTerminal(remotePath)
+    if not isSupportedTerminalFrontmost() then
+        alert("Claudeboard: supported terminal is no longer focused")
         return
     end
 
-    if not isGhosttyFrontmost() then
-        ghostty:activate()
-    end
-
     hs.timer.doAfter(config.typeDelaySeconds, function()
-        if not isGhosttyFrontmost() then
-            alert("Claudeboard: Ghostty is no longer focused")
+        if not isSupportedTerminalFrontmost() then
+            alert("Claudeboard: supported terminal is no longer focused")
             return
         end
 
@@ -194,7 +200,7 @@ local function tryBridgeUpload(candidates, candidateIndex, requestId, imageBase6
                     return
                 end
 
-                typeIntoGhostty(payload.remotePath)
+                typeIntoTerminal(payload.remotePath)
                 return
             end
 
@@ -235,19 +241,13 @@ local function readClipboardImageBase64()
     return string.match(dataUrl, "base64,(.+)")
 end
 
-local function startGhosttyUpload()
-    if not isGhosttyFrontmost() then
+local function startTerminalUpload()
+    if not isSupportedTerminalFrontmost() then
         return
     end
 
     if activeRequestId then
         alert("Claudeboard: upload already in progress")
-        return
-    end
-
-    activeGhosttyApp = hs.application.frontmostApplication()
-    if not activeGhosttyApp then
-        alert("Claudeboard: failed to capture Ghostty application")
         return
     end
 
@@ -283,11 +283,11 @@ local function startGhosttyUpload()
 end
 
 uploadHotkey = hs.hotkey.bind(config.hotkey.mods, config.hotkey.key, function()
-    if not isGhosttyFrontmost() then
+    if not isSupportedTerminalFrontmost() then
         return
     end
 
-    startGhosttyUpload()
+    startTerminalUpload()
 end)
 
-alert("Claudeboard Ghostty bridge loaded")
+alert("Claudeboard terminal bridge loaded")

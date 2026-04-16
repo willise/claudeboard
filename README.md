@@ -28,15 +28,17 @@ Share images with Claude Code running on a remote server via Remote-SSH. Upload 
 
 💡 **Claude Code Tip**: The generated file paths can be directly shared with Claude Code for image analysis, making it perfect for discussing screenshots, diagrams, or visual debugging.
 
-### macOS Ghostty + Hammerspoon
-If you work in Ghostty on macOS, you can keep the same clipboard-image workflow and have the resulting remote path inserted back into the terminal automatically.
+### macOS Ghostty / iTerm2 + Hammerspoon
+If you work in Ghostty or iTerm2 on macOS, you can keep the same clipboard-image workflow and have the resulting remote path inserted back into the terminal automatically.
 
 1. Install [Hammerspoon](https://www.hammerspoon.org/) and grant it Accessibility permission in System Settings.
 2. Copy [`examples/hammerspoon/init.lua`](examples/hammerspoon/init.lua) to `~/.hammerspoon/init.lua`.
-3. Keep VS Code or Trae connected to the same Remote-SSH workspace you are using in Ghostty.
-4. Focus Ghostty and press `Cmd+Alt+V`.
+3. Keep VS Code or Trae connected to the same Remote-SSH workspace you are using in your terminal.
+4. Focus Ghostty or iTerm2 and press `Cmd+Alt+V`.
 
 The example script requires no local Node.js runtime. It reads active Claudeboard bridge registrations from `~/.claudeboard/ghostty-bridges`, connects to the selected localhost bridge directly, and does not switch focus to the IDE window.
+
+The script is preconfigured for the default app names `Ghostty` and `iTerm2`. If yours differs, adjust the config block at the top of the Hammerspoon file.
 
 Ghostty bridge uploads are handled without IDE notification UI, so the upload can finish while Trae or VS Code stays in the background.
 
